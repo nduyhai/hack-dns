@@ -4,9 +4,14 @@ import (
 	"context"
 	"github.com/sourcegraph/conc/pool"
 	"go.uber.org/zap"
+	"math/rand"
 	"net/http"
 	"net/http/httptrace"
 	"time"
+)
+
+const (
+	defaultTimeout = 100
 )
 
 func main() {
@@ -22,35 +27,37 @@ func main() {
 	ps := pool.New().WithContext(context.Background())
 	for i := 0; i < 100; i++ {
 		ps.Go(func(ctx context.Context) error {
-			childCtx, cancelFunc := context.WithTimeout(ctx, 100*time.Millisecond)
-			defer cancelFunc()
-			return remoteCall(childCtx, client, logger)
+			return remoteCall(ctx, client, logger)
 		})
 	}
 	err := ps.Wait()
 	if err != nil {
-		logger.Error("wait err", zap.Error(err))
+		logger.Error("wait err")
 	}
 }
 
 func remoteCall(ctx context.Context, client *http.Client, logger *zap.Logger) error {
+	n := rand.Intn(defaultTimeout)
+	childCtx, cancelFunc := context.WithTimeout(ctx, time.Duration(n)*time.Millisecond)
+	defer cancelFunc()
+
 	trace := &httptrace.ClientTrace{
 		DNSDone: func(info httptrace.DNSDoneInfo) {
-			logger.Info("done looking up dns", zap.Any("dns_info", info))
+			logger.Info("done looking up dns", zap.Any("dns_info", info), zap.Int("ms", n))
 		},
 	}
 
-	traceCtx := httptrace.WithClientTrace(ctx, trace)
+	traceCtx := httptrace.WithClientTrace(childCtx, trace)
 
-	request, err := http.NewRequestWithContext(traceCtx, "GET", "https://tinhte.vn", nil)
+	request, err := http.NewRequestWithContext(traceCtx, "GET", "http://jupiter:80", nil)
 	if err != nil {
-		logger.Error("create http request", zap.Error(err))
+		logger.Debug("create http request", zap.Error(err))
 		return err
 	}
 
 	_, err = client.Do(request)
 	if err != nil {
-		logger.Error("do http request", zap.Error(err))
+		logger.Debug("do http request", zap.Error(err))
 		return err
 	}
 
